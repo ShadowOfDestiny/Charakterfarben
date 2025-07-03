@@ -176,60 +176,84 @@ function charakterfarben_deactivate()
 // ### Kernfunktionen ###
 
 /**
- * Funktion #1: Behandelt fertige Beiträge (im Postbit)
- * FÜGT CSS HINZU und WANDELT TEXT UM.
+ * DIESE FUNKTION ERSETZT DEINE "charakterfarben_auto_format"
+ * Sie ist jetzt die einzige Funktion, die den Text umwandelt.
  */
 function charakterfarben_post_handler(&$post)
 {
     global $mybb, $db, $headerinclude;
     static $processed_users_css = [];
 
-    // --- Teil A: CSS hinzufügen (nur einmal pro User) ---
+    // --- Teil A: CSS hinzufügen (bleibt unverändert) ---
     $user_id = (int)$post['uid'];
-    if (!isset($processed_users_css[$user_id]) && $user_id > 0)
-    {
+    if (!isset($processed_users_css[$user_id]) && $user_id > 0) {
         $fid = (int)$mybb->settings['charakterfarben_fid'];
         if ($fid && isset($post['fid'.$fid])) {
-            $char_name = strtolower(trim($post['fid'.$fid]));
-            $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
-
-            if (!empty($clean_name)) {
+            $char_name_css = strtolower(trim($post['fid'.$fid]));
+            $clean_name_css = preg_replace('/[^a-z0-9]/', '', $char_name_css);
+            if (!empty($clean_name_css)) {
                 $current_theme_id = (int)$mybb->user['style'];
                 $query = $db->simple_select("charakterfarben", "color", "uid = '{$user_id}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
                 $color_data = $db->fetch_array($query);
                 if ($color_data && !empty($color_data['color'])) {
-                    $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name}, .post_body span.{$clean_name} { color: {$color_data['color']} !important; }</style>\n";
+                    $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name_css}, .post_body span.{$clean_name_css} { color: {$color_data['color']} !important; }</style>\n";
                     $processed_users_css[$user_id] = true;
                 }
             }
         }
     }
 
-    // --- Teil B: Nachrichtentext umwandeln ---
-    $fid = (int)$mybb->settings['charakterfarben_fid'];
-    if (isset($post['uid']) && $post['uid'] > 0 && isset($post['fid'.$fid]))
+    // --- Teil B: Nachrichtentext umwandeln (NUR WENN IM ACP AKTIVIERT) ---
+    if(true)
     {
-        $char_name = strtolower(trim($post['fid'.$fid]));
-        $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
+        $fid = (int)$mybb->settings['charakterfarben_fid'];
+        if (isset($post['uid']) && $post['uid'] > 0 && isset($post['fid'.$fid])) {
+            $char_name = strtolower(trim($post['fid'.$fid]));
+            $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
 
-        if (!empty($clean_name)) {
-            // Schutz vor doppelter Formatierung
-            if (strpos($post['message'], "<{$clean_name}>") === false && strpos($post['message'], "class=\"{$clean_name}\"") === false) {
+            if (!empty($clean_name) && !strpos($post['message'], "class=\"{$clean_name}\"")) {
+
+                // Wir benutzen jetzt den eingebauten DOM-Parser von PHP
+                $dom = new DOMDocument();
+                // Wichtig: Fehler unterdrücken, da wir nur mit HTML-Fragmenten arbeiten
+                libxml_use_internal_errors(true);
+                // HTML laden und sicherstellen, dass es als UTF-8 behandelt wird
+                $dom->loadHTML('<?xml encoding="UTF-8">' . $post['message'], LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                libxml_clear_errors();
+
+                $xpath = new DOMXPath($dom);
+                // Wir suchen nur reine Textknoten, die nicht innerhalb von script- oder style-Tags sind
+                $textNodes = $xpath->query('//text()[not(ancestor::script) and not(ancestor::style)]');
+
                 $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
-                $post['message'] = preg_replace_callback(
-                    $regex,
-                    function ($matches) use ($clean_name) {
-                        return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
-                    },
-                    $post['message']
-                );
+
+                foreach($textNodes as $node) {
+                    $text = $node->nodeValue;
+                    // Wir führen den Regex nur auf reinen Text-Knoten aus
+                    $newText = preg_replace_callback(
+                        $regex,
+                        function ($matches) use ($clean_name) {
+                            return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
+                        },
+                        $text
+                    );
+
+                    // Nur wenn eine Änderung stattgefunden hat, ersetzen wir den Knoten
+                    if ($newText !== $text) {
+                        $fragment = $dom->createDocumentFragment();
+                        // @ unterdrückt hier eine harmlose Warnung bei der Konvertierung
+                        @$fragment->appendXML($newText);
+                        $node->parentNode->replaceChild($fragment, $node);
+                    }
+                }
+                // Das neue, sichere HTML speichern
+                $post['message'] = $dom->saveHTML();
             }
         }
     }
     
     return $post;
 }
-
 
 /**
  * Funktion #2: Behandelt die Beitragsvorschau
@@ -241,34 +265,31 @@ function charakterfarben_preview_handler()
 
     if (isset($mybb->input['previewpost'])) 
     {
+        // CSS für Vorschau laden
         if ($mybb->user['uid'] == 0) return;
-
         $fid = (int)$mybb->settings['charakterfarben_fid'];
         if (!$fid || !isset($mybb->user['fid'.$fid])) return;
-
         $char_name = strtolower(trim($mybb->user['fid'.$fid]));
         $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
         if (empty($clean_name)) return;
         
-        // CSS für Vorschau laden
         $current_theme_id = (int)$mybb->user['style'];
         $query = $db->simple_select("charakterfarben", "color", "uid = '{$mybb->user['uid']}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
         $color_data = $db->fetch_array($query);
-
         if ($color_data && !empty($color_data['color'])) {
             $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name}, .post_body span.{$clean_name} { color: {$color_data['color']} !important; }</style>\n";
         }
         
-        // Text der Vorschau direkt umwandeln
-        $message = &$mybb->input['message'];
-        $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
-        $message = preg_replace_callback(
-            $regex,
-            function ($matches) use ($clean_name) {
+        // Text der Vorschau umwandeln (NUR WENN IM ACP AKTIVIERT)
+        if(true)
+        {
+            $message = &$mybb->input['message'];
+            $regex = '/(?<!=\s*)"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
+            $message = preg_replace_callback($regex, function ($matches) use ($clean_name) {
+                if (strpos($matches[0], '[') !== false) { return $matches[0]; }
                 return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
-            },
-            $message
-        );
+            }, $message);
+        }
     }
 }
 
