@@ -261,34 +261,39 @@ function charakterfarben_post_handler(&$post)
  */
 function charakterfarben_preview_handler()
 {
-    global $mybb, $db, $headerinclude;
+    global $mybb, $db;
 
     if (isset($mybb->input['previewpost'])) 
     {
-        // CSS für Vorschau laden
         if ($mybb->user['uid'] == 0) return;
+
         $fid = (int)$mybb->settings['charakterfarben_fid'];
         if (!$fid || !isset($mybb->user['fid'.$fid])) return;
-        $char_name = strtolower(trim($mybb->user['fid'.$fid]));
-        $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
-        if (empty($clean_name)) return;
-        
+
+        // Hole die Farbe des Benutzers für das aktuelle Theme
         $current_theme_id = (int)$mybb->user['style'];
         $query = $db->simple_select("charakterfarben", "color", "uid = '{$mybb->user['uid']}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
         $color_data = $db->fetch_array($query);
+
+        // Nur wenn eine Farbe gefunden wurde, machen wir weiter
         if ($color_data && !empty($color_data['color'])) {
-            $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name}, .post_body span.{$clean_name} { color: {$color_data['color']} !important; }</style>\n";
-        }
-        
-        // Text der Vorschau umwandeln (NUR WENN IM ACP AKTIVIERT)
-        if(true)
-        {
+            
+            $color_hex = $color_data['color'];
+            
+            // Text der Vorschau direkt als MyCode umwandeln
             $message = &$mybb->input['message'];
-            $regex = '/(?<!=\s*)"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
-            $message = preg_replace_callback($regex, function ($matches) use ($clean_name) {
-                if (strpos($matches[0], '[') !== false) { return $matches[0]; }
-                return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
-            }, $message);
+            
+            // Wichtig: Wir brauchen hier den einfachen Regex, da der Text noch kein HTML enthält
+            $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
+            
+            $message = preg_replace_callback(
+                $regex,
+                function ($matches) use ($color_hex) {
+                    // Wir umschließen das gefundene Zitat einfach mit einem [color]-Tag
+                    return '[color='.$color_hex.']'.$matches[0].'[/color]';
+                },
+                $message
+            );
         }
     }
 }
