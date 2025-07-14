@@ -282,55 +282,63 @@ function charakterfarben_post_handler(&$post)
     return $post;
 }
 
-/**
- * Funktion #2: Behandelt die Beitragsvorschau
- * FÜGT CSS HINZU und WANDELT TEXT UM.
- */
 function charakterfarben_preview_handler()
 {
-    global $mybb, $db;
+    global $mybb, $db, $headerinclude;
 
     if (isset($mybb->input['previewpost'])) 
     {
-		
-		// ### NEUER TÜRSTEHER ###
+        // Türsteher für aktive Foren
         $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
-        $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
-        // Wenn das aktuelle Forum nicht in der Liste ist, stoppe die Funktion sofort.
-        if (!in_array($current_fid, $active_forums)) {
-            return;
+        if (!empty($active_forums[0]) && isset($mybb->input['fid'])) {
+            $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
+            if (!in_array($current_fid, $active_forums)) {
+                return;
+            }
         }
-        // ### ENDE TÜRSTEHER ###
-		
+
         if ($mybb->user['uid'] == 0) return;
 
         $fid = (int)$mybb->settings['charakterfarben_fid'];
         if (!$fid || !isset($mybb->user['fid'.$fid])) return;
 
-        // Hole die Farbe des Benutzers für das aktuelle Theme
+        $char_name = strtolower(trim($mybb->user['fid'.$fid]));
+        $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
+        if (empty($clean_name)) return;
+
+        // Farbe des Benutzers holen
         $current_theme_id = (int)$mybb->user['style'];
         $query = $db->simple_select("charakterfarben", "color", "uid = '{$mybb->user['uid']}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
         $color_data = $db->fetch_array($query);
 
-        // Nur wenn eine Farbe gefunden wurde, machen wir weiter
         if ($color_data && !empty($color_data['color'])) {
             
             $color_hex = $color_data['color'];
+
+            // SCHRITT 1: CSS immer laden, damit manuelle Tags funktionieren
+            $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name}, .post_body span.{$clean_name} { color: {$color_hex} !important; }</style>\n";
             
-            // Text der Vorschau direkt als MyCode umwandeln
-            $message = &$mybb->input['message'];
-            
-            // Wichtig: Wir brauchen hier den einfachen Regex, da der Text noch kein HTML enthält
-            $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
-            
-            $message = preg_replace_callback(
-                $regex,
-                function ($matches) use ($color_hex) {
-                    // Wir umschließen das gefundene Zitat einfach mit einem [color]-Tag
-                    return '[color='.$color_hex.']'.$matches[0].'[/color]';
-                },
-                $message
-            );
+            // ### FINALE KORREKTUR ###
+            // SCHRITT 2: Automatik nur ausführen, wenn die Nachricht existiert und ein String ist
+            if (isset($mybb->input['message']) && is_string($mybb->input['message']))
+            {
+                $message = &$mybb->input['message'];
+
+                // Und nur, wenn keine manuellen Tags vorhanden sind
+                if (strpos($message, "<{$clean_name}>") === false) 
+                {
+                    $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
+                    
+                    $message = preg_replace_callback(
+                        $regex,
+                        function ($matches) use ($color_hex) {
+                            return '[color='.$color_hex.']'.$matches[0].'[/color]';
+                        },
+                        $message
+                    );
+                }
+            }
+            // ### ENDE KORREKTUR ###
         }
     }
 }
