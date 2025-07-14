@@ -8,7 +8,6 @@ if(!defined("IN_MYBB"))
 // === FINALE VERSION - KOMBINATION ALLER FUNKTIONIERENDEN TEILE ===
 
 // ### Hooks ###
-// ### Hooks ###
 $plugins->add_hook("postbit", "charakterfarben_post_handler"); // Erledigt CSS & Textumwandlung für fertige Posts
 $plugins->add_hook("newreply_start", "charakterfarben_preview_handler"); // Erledigt CSS & Textumwandlung für die Vorschau
 $plugins->add_hook("newthread_start", "charakterfarben_preview_handler");
@@ -45,18 +44,30 @@ function charakterfarben_install()
         $db->write_query("CREATE TABLE ".TABLE_PREFIX."charakterfarben (`uid` int(10) NOT NULL, `tid` int(10) NOT NULL, `color` varchar(7) NOT NULL, PRIMARY KEY (`uid`, `tid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     }
 	$setting_group = ['name' => 'charakterfarben', 
-	'title' => 'Charakterfarben Einstellungen', 
-	'description' => 'Einstellungen für das Charakterfarben Plugin.', 
-	'disporder' => 5, 
-	'isdefault' => 0];
+		'title' => 'Charakterfarben Einstellungen', 
+		'description' => 'Einstellungen für das Charakterfarben Plugin.', 
+		'disporder' => 5, 
+		'isdefault' => 0];
 	$gid = $db->insert_query("settinggroups", $setting_group);
+	
 	$setting = ['name' => 'charakterfarben_fid', 
-	'title' => 'Profilfeld-ID für Charakternamen', 
-	'description' => 'Gib die ID des Profilfeldes für den Charakternamen an.', 
-	'optionscode' => 'numeric', 
-	'value' => '8', 
-	'disporder' => 1, 'gid' => (int)$gid];
+		'title' => 'Profilfeld-ID für Charakternamen', 
+		'description' => 'Gib die ID des Profilfeldes für den Charakternamen an.', 
+		'optionscode' => 'numeric', 
+		'value' => '8', 
+		'disporder' => 1, 
+		'gid' => (int)$gid];
 	$db->insert_query("settings", $setting);
+	
+	// NEUE EINSTELLUNG FÜR DIE FORENAUSWAHL
+    $setting2 = ['name' => 'charakterfarben_active_forums', 
+		'title' => 'Aktive Foren', 
+		'description' => 'Wähle die Foren aus, in denen die automatische Einfärbung aktiv sein soll. Wähle keine aus, um es überall zu deaktivieren.', 
+		'optionscode' => 'forumselect', 
+		'value' => '', 'disporder' => 2, 
+		'gid' => (int)$gid];
+    $db->insert_query("settings", $setting2);
+	
     rebuild_settings();
 }
 
@@ -81,6 +92,21 @@ function charakterfarben_uninstall()
 function charakterfarben_activate()
 {
 	global $db, $lang;
+	
+	// Wir prüfen, ob die Einstellung bereits existiert.
+    $query = $db->simple_select("settings", "sid", "name='charakterfarben_active_forums'");
+    if($db->num_rows($query) == 0)
+    {
+        // Wenn nicht, fügen wir sie hinzu.
+        $setting_group_query = $db->simple_select("settinggroups", "gid", "name='charakterfarben'");
+        $gid = $db->fetch_field($setting_group_query, "gid");
+
+        // KORREKTUR hier: 'forumselect' statt 'forumselect_multiple'
+        $setting = ['name' => 'charakterfarben_active_forums', 'title' => 'Aktive Foren', 'description' => 'Wähle die Foren aus, in denen die automatische Einfärbung aktiv sein soll. Wähle keine aus, um es überall zu deaktivieren.', 'optionscode' => 'forumselect', 'value' => '', 'disporder' => 2, 'gid' => (int)$gid];
+        $db->insert_query("settings", $setting);
+        rebuild_settings();
+    }
+
 	
 	$lang->load('charakterfarben');
 	include MYBB_ROOT."/inc/adminfunctions_templates.php";
@@ -184,7 +210,14 @@ function charakterfarben_post_handler(&$post)
     global $mybb, $db, $headerinclude;
     static $processed_users_css = [];
 
-    // --- Teil A: CSS hinzufügen (bleibt unverändert) ---
+    // ### TÜRSTEHER ###
+    $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
+    if (!in_array($post['fid'], $active_forums)) {
+        // KORREKTUR #1: Immer das $post-Objekt zurückgeben
+        return $post;
+    }
+
+    // --- Teil A: CSS hinzufügen ---
     $user_id = (int)$post['uid'];
     if (!isset($processed_users_css[$user_id]) && $user_id > 0) {
         $fid = (int)$mybb->settings['charakterfarben_fid'];
@@ -203,8 +236,9 @@ function charakterfarben_post_handler(&$post)
         }
     }
 
-    // --- Teil B: Nachrichtentext umwandeln (NUR WENN IM ACP AKTIVIERT) ---
-    if(true)
+    // --- Teil B: Nachrichtentext umwandeln ---
+    // Der if(true) Block ist deine persönliche Anpassung, die ist ok so.
+    if(true) 
     {
         $fid = (int)$mybb->settings['charakterfarben_fid'];
         if (isset($post['uid']) && $post['uid'] > 0 && isset($post['fid'.$fid])) {
@@ -213,41 +247,34 @@ function charakterfarben_post_handler(&$post)
 
             if (!empty($clean_name) && !strpos($post['message'], "class=\"{$clean_name}\"")) {
 
-                // Wir benutzen jetzt den eingebauten DOM-Parser von PHP
                 $dom = new DOMDocument();
-                // Wichtig: Fehler unterdrücken, da wir nur mit HTML-Fragmenten arbeiten
                 libxml_use_internal_errors(true);
-                // HTML laden und sicherstellen, dass es als UTF-8 behandelt wird
-                $dom->loadHTML('<?xml encoding="UTF-8">' . $post['message'], LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                $dom->loadHTML('<?xml encoding="UTF-8"><body>' . $post['message'] . '</body>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
                 libxml_clear_errors();
-
                 $xpath = new DOMXPath($dom);
-                // Wir suchen nur reine Textknoten, die nicht innerhalb von script- oder style-Tags sind
-                $textNodes = $xpath->query('//text()[not(ancestor::script) and not(ancestor::style)]');
-
+                $textNodes = $xpath->query('//body//text()[not(ancestor::script) and not(ancestor::style)]');
                 $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
 
                 foreach($textNodes as $node) {
                     $text = $node->nodeValue;
-                    // Wir führen den Regex nur auf reinen Text-Knoten aus
-                    $newText = preg_replace_callback(
-                        $regex,
-                        function ($matches) use ($clean_name) {
-                            return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
-                        },
-                        $text
-                    );
+                    $newText = preg_replace_callback($regex, function ($matches) use ($clean_name) {
+                        return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
+                    }, $text);
 
-                    // Nur wenn eine Änderung stattgefunden hat, ersetzen wir den Knoten
                     if ($newText !== $text) {
                         $fragment = $dom->createDocumentFragment();
-                        // @ unterdrückt hier eine harmlose Warnung bei der Konvertierung
                         @$fragment->appendXML($newText);
                         $node->parentNode->replaceChild($fragment, $node);
                     }
                 }
-                // Das neue, sichere HTML speichern
-                $post['message'] = $dom->saveHTML();
+                
+                // KORREKTUR #2: Nur den Inhalt des <body>-Tags speichern, nicht das ganze Dokument
+                $body_node = $dom->getElementsByTagName('body')->item(0);
+                $new_message = '';
+                foreach ($body_node->childNodes as $child) {
+                    $new_message .= $dom->saveHTML($child);
+                }
+                $post['message'] = $new_message;
             }
         }
     }
@@ -265,6 +292,16 @@ function charakterfarben_preview_handler()
 
     if (isset($mybb->input['previewpost'])) 
     {
+		
+		// ### NEUER TÜRSTEHER ###
+        $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
+        $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
+        // Wenn das aktuelle Forum nicht in der Liste ist, stoppe die Funktion sofort.
+        if (!in_array($current_fid, $active_forums)) {
+            return;
+        }
+        // ### ENDE TÜRSTEHER ###
+		
         if ($mybb->user['uid'] == 0) return;
 
         $fid = (int)$mybb->settings['charakterfarben_fid'];
