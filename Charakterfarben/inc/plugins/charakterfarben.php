@@ -5,14 +5,10 @@ if(!defined("IN_MYBB"))
 	die("Direct initialization of this file is not allowed.");
 }
 
-// === FINALE VERSION - KOMBINATION ALLER FUNKTIONIERENDEN TEILE ===
-
 // ### Hooks ###
-$plugins->add_hook("postbit", "charakterfarben_post_handler"); // Erledigt CSS & Textumwandlung für fertige Posts
-$plugins->add_hook("newreply_start", "charakterfarben_preview_handler"); // Erledigt CSS & Textumwandlung für die Vorschau
+$plugins->add_hook("postbit", "charakterfarben_post_handler");
+$plugins->add_hook("newreply_start", "charakterfarben_preview_handler");
 $plugins->add_hook("newthread_start", "charakterfarben_preview_handler");
-
-// UCP und ACP Hooks
 $plugins->add_hook("usercp_start", "charakterfarben_usercp_page");
 $plugins->add_hook('usercp_menu', 'charakterfarben_nav', 90);
 $plugins->add_hook("admin_config_menu", "charakterfarben_admin_menu");
@@ -20,53 +16,60 @@ $plugins->add_hook("admin_config_action_handler", "charakterfarben_admin_action_
 $plugins->add_hook("admin_config_permissions", "charakterfarben_admin_permissions");
 $plugins->add_hook("admin_load", "charakterfarben_admin_load");
 
-
 function charakterfarben_info()
 {
 	global $lang;
 	$lang->load('charakterfarben');
 	return array(
 		"name"			=> "Charakterfarben", 
-		"description"	=> "Dynamische Farben für wörtliche Rede. Nutzt Datenbank-Templates und direkte CSS-Injektion.",
+		"description"	=> "Färbt wörtliche Rede automatisch ein. Unterstützt manuelle Tags und Zeilenumbrüche.",
 		"website"		=> "https://shadow.or.at/index.php", 
 		"author"		=> "Dani",
 		"authorsite"	=> "https://github.com/ShadowOfDestiny", 
-		"version"		=> "1.0",
+		"version"		=> "3.0_FINAL",
 		"compatibility" => "18*"
 	);
 }
 
 function charakterfarben_install()
 {
-    global $db, $lang;
-	$lang->load('charakterfarben');
+    global $db;
     if (!$db->table_exists("charakterfarben")) {
-        $db->write_query("CREATE TABLE ".TABLE_PREFIX."charakterfarben (`uid` int(10) NOT NULL, `tid` int(10) NOT NULL, `color` varchar(7) NOT NULL, PRIMARY KEY (`uid`, `tid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+        $db->write_query("CREATE TABLE ".TABLE_PREFIX."charakterfarben (
+			`uid` int(10) NOT NULL, 
+			`tid` int(10) NOT NULL, 
+			`color` varchar(7) NOT NULL, 
+			PRIMARY KEY (`uid`, `tid`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     }
+	
 	$setting_group = ['name' => 'charakterfarben', 
 		'title' => 'Charakterfarben Einstellungen', 
 		'description' => 'Einstellungen für das Charakterfarben Plugin.', 
 		'disporder' => 5, 
 		'isdefault' => 0];
-	$gid = $db->insert_query("settinggroups", $setting_group);
+	$gid = $db->insert_query("settinggroups", $setting_group
+	);
 	
 	$setting = ['name' => 'charakterfarben_fid', 
 		'title' => 'Profilfeld-ID für Charakternamen', 
-		'description' => 'Gib die ID des Profilfeldes für den Charakternamen an.', 
+		'description' => 'Gib die ID des Profilfeldes an, das den Charakternamen enthält (z.B. für die manuelle Tag-Prüfung).', 
 		'optionscode' => 'numeric', 
 		'value' => '8', 
 		'disporder' => 1, 
 		'gid' => (int)$gid];
-	$db->insert_query("settings", $setting);
+	$db->insert_query("settings", $setting
+	);
 	
-	// NEUE EINSTELLUNG FÜR DIE FORENAUSWAHL
     $setting2 = ['name' => 'charakterfarben_active_forums', 
 		'title' => 'Aktive Foren', 
-		'description' => 'Wähle die Foren aus, in denen die automatische Einfärbung aktiv sein soll. Wähle keine aus, um es überall zu deaktivieren.', 
+		'description' => 'Wähle die Foren aus, in denen die automatische Einfärbung aktiv sein soll.', 
 		'optionscode' => 'forumselect', 
-		'value' => '', 'disporder' => 2, 
+		'value' => '', 
+		'disporder' => 2, 
 		'gid' => (int)$gid];
-    $db->insert_query("settings", $setting2);
+    $db->insert_query("settings", $setting2
+	);
 	
     rebuild_settings();
 }
@@ -91,267 +94,195 @@ function charakterfarben_uninstall()
 
 function charakterfarben_activate()
 {
-	global $db, $lang;
-	
-	// Wir prüfen, ob die Einstellung bereits existiert.
-    $query = $db->simple_select("settings", "sid", "name='charakterfarben_active_forums'");
-    if($db->num_rows($query) == 0)
-    {
-        // Wenn nicht, fügen wir sie hinzu.
-        $setting_group_query = $db->simple_select("settinggroups", "gid", "name='charakterfarben'");
-        $gid = $db->fetch_field($setting_group_query, "gid");
-
-        // KORREKTUR hier: 'forumselect' statt 'forumselect_multiple'
-        $setting = ['name' => 'charakterfarben_active_forums', 'title' => 'Aktive Foren', 'description' => 'Wähle die Foren aus, in denen die automatische Einfärbung aktiv sein soll. Wähle keine aus, um es überall zu deaktivieren.', 'optionscode' => 'forumselect', 'value' => '', 'disporder' => 2, 'gid' => (int)$gid];
-        $db->insert_query("settings", $setting);
-        rebuild_settings();
-    }
-
-	
-	$lang->load('charakterfarben');
+	global $db;
 	include MYBB_ROOT."/inc/adminfunctions_templates.php";
 	
-	// Templates für die UCP-Seite erstellen
 	$insert_array = array(
 		'title'		=> 'charakterfarben_ucp_page',
 		'template'	=> $db->escape_string('<html>
 <head>
-    <title>{$lang->user_cp}</title>
-    {$headerinclude}
+	<title>{$lang->user_cp}</title>
+	{$headerinclude}
 </head>
 <body>
-    {$header}
-    <table width="100%" border="0" align="center">
-        <tr>
-            {$usercpnav}
-            <td valign="top">
-                <form method="post" action="usercp.php">
+	{$header}
+	<table width="100%" border="0" align="center">
+		<tr>
+			{$usercpnav}
+			<td valign="top">
+				<form method="post" action="usercp.php">
 				<input type="hidden" name="my_post_key" value="{$mybb->post_code}" />
-                    <table border="0" cellspacing="1" cellpadding="4" class="tborder">
-                        <thead>
-                            <tr><th class="thead" colspan="3"><strong>{$lang->charakterfarben_ucp_title}</strong></th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td class="trow2" colspan="3">{$lang->charakterfarben_ucp_desc}</td></tr>
-                            <tr>
-                                <td class="tcat" width="25%">{$lang->charakterfarben_ucp_theme}</td>
-                                <td class="tcat" width="15%">{$lang->charakterfarben_ucp_color}</td>
-                                <td class="tcat" width="60%">{$lang->charakterfarben_ucp_preview}</td>
-                            </tr>
-                            {$style_bit}
-                        </tbody>
-                    </table>
-                    <br />
+					<table border="0" cellspacing="1" cellpadding="4" class="tborder">
+						<thead>
+							<tr>
+								<th class="thead" colspan="3"><strong>Charakterfarben einstellen</strong></th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td class="trow2" colspan="3">Hier kannst du für jedes Forum-Theme eine individuelle Farbe für die wörtliche Rede deines Charakters festlegen.</td>
+							</tr>
+							<tr>
+								<td class="tcat" width="25%">Theme</td>
+								<td class="tcat" width="15%">Farbe</td>
+								<td class="tcat" width="60%">Vorschau</td>
+							</tr>
+							{$style_bit}
+						</tbody>
+					</table>
+					<br />
 					<div align="center">
 					<input type="hidden" name="action" value="do_charakterfarben" />
-                    <input type="submit" class="button" name="charakterfarben"  value="{$lang->charakterfarben_ucp_save}" />
+					<input type="submit" class="button" value="Farben speichern" />
 					</div>
-                </form>
-                {$live_preview_js}
-            </td>
-        </tr>
-    </table>
-    {$footer}
+				</form>
+				{$live_preview_js}
+			</td>
+		</tr>
+	</table>
+	{$footer}
 </body>
 </html>'),
-		'sid'		=> '-1',
-		'version'	=> '',
+		'sid'		=> '-1', 
+		'version'	=> '', 
 		'dateline'	=> TIME_NOW
 	);
 	$db->insert_query("templates", $insert_array);
 
 	$insert_array = array(
 		'title'		=> 'charakterfarben_ucp_row',
-		'template'	=> $db->escape_string('<tr>
-    <td class="trow1"><strong>{$style[\'name\']}</strong></td>
-    <td class="trow1" style="vertical-align: middle;">
-        <input type="color" name="colors[{$style[\'tid\']}]" value="{$saved_color}" id="color_picker_{$style[\'tid\']}" data-preview-id="preview_{$style[\'tid\']}">
-    </td>
-    <td class="trow1">
-        <div id="preview_{$style[\'tid\']}" style="background-color: {$preview_bg_color}; color: {$saved_color}; padding: 10px; border: 1px solid #ccc; border-radius: 5px;">
-            Dein Charaktername: "So sieht die wörtliche Rede aus."
-        </div>
-    </td>
-</tr>'),
-		'sid'		=> '-1',
-		'version'	=> '',
+		'template'	=> $db->escape_string('
+		<tr>
+			<td class="trow1"><strong>{$style[\'name\']}</strong></td>
+			<td class="trow1" style="vertical-align: middle;">
+				<input type="color" name="colors[{$style[\'tid\']}]" value="{$saved_color}" id="color_picker_{$style[\'tid\']}">
+			</td>
+			<td class="trow1">
+				<div id="preview_{$style[\'tid\']}" style="background-color: {$preview_bg_color}; color: {$saved_color}; padding: 10px; border: 1px solid #ccc; border-radius: 5px;">"So sieht die wörtliche Rede aus, wenn sie gefärbt wird."</div>
+			</td>
+		</tr>'),
+		'sid'		=> '-1', 
+		'version'	=> '', 
 		'dateline'	=> TIME_NOW
 	);
 	$db->insert_query("templates", $insert_array);
 
 	$insert_array = array(
 		'title'		=> 'charakterfarben_nav_usercp',
-		'template'	=> $db->escape_string('<tr><td class="trow1"><a href="usercp.php?action=charakterfarben" class="usercp_nav_item">{$lang->charakterfarben_ucp_nav}</a></td></tr>'),
-		'sid'		=> '-1',
-		'version'	=> '',
+		'template'	=> $db->escape_string('
+		<tr>
+			<td class="trow1">
+				<a href="usercp.php?action=charakterfarben" class="usercp_nav_item">Charakterfarben</a>
+			</td>
+		</tr>'),
+		'sid'		=> '-1', 
+		'version'	=> '', 
 		'dateline'	=> TIME_NOW
 	);
 	$db->insert_query("templates", $insert_array);
 }
 
-function charakterfarben_deactivate()
-{
-	global $db, $lang;
-	
-    $lang->load('charakterfarben');
-	include MYBB_ROOT."/inc/adminfunctions_templates.php";
-
-    $db->delete_query("templates", "title LIKE 'charakterfarben%'");
-}
-
-// ### Kernfunktionen ###
-
-/**
- * DIESE FUNKTION ERSETZT DEINE "charakterfarben_auto_format"
- * Sie ist jetzt die einzige Funktion, die den Text umwandelt.
- */
 function charakterfarben_post_handler(&$post)
 {
     global $mybb, $db, $headerinclude;
     static $processed_users_css = [];
 
-    // ### TÜRSTEHER ###
     $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
-    if (!in_array($post['fid'], $active_forums)) {
+    if (empty($active_forums[0]) || !in_array($post['fid'], $active_forums)) {
         return $post;
     }
 
-    // --- Teil A: CSS hinzufügen (unverändert, funktioniert) ---
     $user_id = (int)$post['uid'];
     if (!isset($processed_users_css[$user_id]) && $user_id > 0) {
-        $fid = (int)$mybb->settings['charakterfarben_fid'];
-        if ($fid && isset($post['fid'.$fid])) {
-            $char_name_css = strtolower(trim($post['fid'.$fid]));
-            $clean_name_css = preg_replace('/[^a-z0-9]/', '', $char_name_css);
+        $fid_char_name = 'fid' . (int)$mybb->settings['charakterfarben_fid'];
+        if (isset($post[$fid_char_name]) && !empty($post[$fid_char_name])) {
+            $clean_name_css = preg_replace('/[^a-z0-9]/', '', strtolower(trim($post[$fid_char_name])));
             if (!empty($clean_name_css)) {
                 $current_theme_id = (int)$mybb->user['style'];
-                if ($mybb->user['style'] == 0) { // Fallback für Admins/Gäste ohne explizites Theme
-                    $current_theme_id = 1; // oder eine andere Standard-Theme-ID
-                }
+                if ($current_theme_id == 0) $current_theme_id = 1;
                 $query = $db->simple_select("charakterfarben", "color", "uid = '{$user_id}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
                 $color_data = $db->fetch_array($query);
                 if ($color_data && !empty($color_data['color'])) {
-                    $headerinclude .= "\n<style type=\"text/css\">.post_body span.{$clean_name_css} { color: {$color_data['color']} !important; }</style>\n";
+                    $color_hex = $color_data['color'];
+                    $headerinclude .= "\n<style type=\"text/css\">
+                        .post_body span.char-{$user_id}, 
+                        .post_body span.{$clean_name_css} { 
+                            color: {$color_hex} !important; 
+                        }
+                    </style>\n";
                     $processed_users_css[$user_id] = true;
                 }
             }
         }
     }
 
-    // --- Teil B: Nachrichtentext umwandeln (FINALE, KORRIGIERTE LOGIK) ---
     $fid = (int)$mybb->settings['charakterfarben_fid'];
-    if (isset($post['uid']) && $post['uid'] > 0 && isset($post['fid'.$fid])) {
-        $char_name = strtolower(trim($post['fid'.$fid]));
-        $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
+    $fid_char_name = 'fid' . $fid;
+    if (isset($post['uid']) && $post['uid'] > 0 && isset($post[$fid_char_name]) && !empty($post[$fid_char_name])) {
+        $clean_name = preg_replace('/[^a-z0-9]/', '', strtolower(trim($post[$fid_char_name])));
+        
+        if (strpos($post['message'], "<{$clean_name}>") !== false) {
+            $post['message'] = preg_replace('/<('.$clean_name.')>(.*?)<\/\\1>/si', '<span class="'.$clean_name.'">$2</span>', $post['message']);
+            return $post;
+        }
 
-        if (!empty($clean_name) && !strpos($post['message'], "class=\"{$clean_name}\"")) {
-            
-            $original_message = $post['message'];
+        $original_message = $post['message'];
+        
+        // ### START DER FINALEN KORREKTUR ###
+        // Dieser Regex ignoriert HTML-Tags (<...>) komplett und sucht nur im restlichen Text nach Zitaten.
+        $regex = '/<[^>]*>(*SKIP)(*FAIL)|("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
+        // ### ENDE DER FINALEN KORREKTUR ###
 
-            // ### START DER NEUEN LOGIK ###
-            
-            // Der Regex, der über Zeilenumbrüche hinweg sucht
-            $regex = '/("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
-
-            $new_message = preg_replace_callback(
-                $regex,
-                function ($matches) use ($clean_name) {
-                    $quote = $matches[0];
-                    
-                    // INTelligente Sicherheitsprüfung:
-                    // 1. Wir entfernen temporär die erlaubten <br>-Tags für die Prüfung.
-                    $check_string = str_ireplace(['<br>', '<br />'], '', $quote);
-                    
-                    // 2. Wir entfernen die äußeren Anführungszeichen für die Prüfung.
-                    $check_string = trim($check_string, '"„“«»');
-                    
-                    // 3. Jetzt prüfen wir, ob *andere* HTML-Tags oder MyCode im Zitat enthalten sind.
-                    if (preg_match('/<[a-z]/i', $check_string) || strpos($check_string, '[') !== false) {
-                        // Zitat enthält komplexes HTML (z.B. Links) oder MyCode -> nicht anfassen
-                        return $quote;
-                    }
-                    
-                    // Das Zitat ist sicher, wir färben es ein.
-                    return '<span class="'.$clean_name.'">' . $quote . '</span>';
-                },
-                $original_message
-            );
-            
-            // ### ENDE DER NEUEN LOGIK ###
-
-            // Sicherheitsprüfung: Nur übernehmen, wenn die Änderung erfolgreich war.
-            if ($new_message !== null && !empty(trim($new_message))) {
-                $post['message'] = $new_message;
-            } else {
-                $post['message'] = $original_message;
-            }
+        $new_message = preg_replace_callback(
+            $regex,
+            function ($matches) use ($post) {
+                return '<span class="char-'.$post['uid'].'">' . $matches[0] . '</span>';
+            },
+            $original_message
+        );
+        if ($new_message !== null) {
+            $post['message'] = $new_message;
         }
     }
-    
     return $post;
 }
 
 function charakterfarben_preview_handler()
 {
-    global $mybb, $db, $headerinclude;
-
-    if (isset($mybb->input['previewpost'])) 
-    {
-        // Türsteher für aktive Foren
+    global $mybb, $db;
+    if (isset($mybb->input['previewpost'])) {
         $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
-        if (!empty($active_forums[0]) && isset($mybb->input['fid'])) {
-            $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
-            if (!in_array($current_fid, $active_forums)) {
-                return;
-            }
-        }
+        $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
+        if (empty($active_forums[0]) || !in_array($current_fid, $active_forums)) return;
 
         if ($mybb->user['uid'] == 0) return;
-
         $fid = (int)$mybb->settings['charakterfarben_fid'];
-        if (!$fid || !isset($mybb->user['fid'.$fid])) return;
-
-        $char_name = strtolower(trim($mybb->user['fid'.$fid]));
+        $fid_char_name = 'fid' . $fid;
+        if (!$fid || !isset($mybb->user[$fid_char_name])) return;
+        $char_name = strtolower(trim($mybb->user[$fid_char_name]));
         $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
-        if (empty($clean_name)) return;
 
-        // Farbe des Benutzers holen
+        if (strpos($mybb->input['message'], "<{$clean_name}>") !== false) return;
+
         $current_theme_id = (int)$mybb->user['style'];
+        if ($current_theme_id == 0) $current_theme_id = 1;
         $query = $db->simple_select("charakterfarben", "color", "uid = '{$mybb->user['uid']}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
         $color_data = $db->fetch_array($query);
 
-        if ($color_data && !empty($color_data['color'])) {
-            
+        if ($color_data && !empty($color_data['color']) && is_string($mybb->input['message'])) {
             $color_hex = $color_data['color'];
-
-            // SCHRITT 1: CSS immer laden, damit manuelle Tags funktionieren
-            $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name}, .post_body span.{$clean_name} { color: {$color_hex} !important; }</style>\n";
-            
-            // ### FINALE KORREKTUR ###
-            // SCHRITT 2: Automatik nur ausführen, wenn die Nachricht existiert und ein String ist
-            if (isset($mybb->input['message']) && is_string($mybb->input['message']))
-            {
-                $message = &$mybb->input['message'];
-
-                // Und nur, wenn keine manuellen Tags vorhanden sind
-                if (strpos($message, "<{$clean_name}>") === false) 
-                {
-                    $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
-                    
-                    $message = preg_replace_callback(
-                        $regex,
-                        function ($matches) use ($color_hex) {
-                            return '[color='.$color_hex.']'.$matches[0].'[/color]';
-                        },
-                        $message
-                    );
-                }
-            }
-            // ### ENDE KORREKTUR ###
+            $message = &$mybb->input['message'];
+            $regex = '/("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
+            $message = preg_replace_callback(
+                $regex,
+                function ($matches) use ($color_hex) {
+                    return '[color='.$color_hex.']'.$matches[0].'[/color]';
+                },
+                $message
+            );
         }
     }
 }
-
 
 function charakterfarben_usercp_page()
 {
