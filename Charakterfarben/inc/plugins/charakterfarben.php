@@ -221,28 +221,29 @@ function charakterfarben_post_handler(&$post)
     if (isset($post['uid']) && $post['uid'] > 0 && isset($post[$fid_char_name]) && !empty($post[$fid_char_name])) {
         $clean_name = preg_replace('/[^a-z0-9]/', '', strtolower(trim($post[$fid_char_name])));
         
-        if (strpos($post['message'], "<{$clean_name}>") !== false) {
-            $post['message'] = preg_replace('/<('.$clean_name.')>(.*?)<\/\\1>/si', '<span class="'.$clean_name.'">$2</span>', $post['message']);
-            return $post;
-        }
-
-        $original_message = $post['message'];
+        // ### START DER KORREKTUR ###
         
-        // ### START DER FINALEN KORREKTUR ###
-        // Dieser Regex ignoriert HTML-Tags (<...>) komplett und sucht nur im restlichen Text nach Zitaten.
-        $regex = '/<[^>]*>(*SKIP)(*FAIL)|("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
-        // ### ENDE DER FINALEN KORREKTUR ###
+        // Schritt 1: Verarbeite zuerst die manuellen Tags und wandle sie in fertiges HTML um.
+        $message = preg_replace('/<('.$clean_name.')>(.*?)<\/\\1>/si', '<span class="'.$clean_name.'">$2</span>', $post['message']);
 
+        // Schritt 2: Lasse die Automatik über den (möglicherweise schon veränderten) Text laufen.
+        // Der Regex ignoriert dabei die <span>-Tags von Schritt 1.
+        $regex = '/<[^>]*>(*SKIP)(*FAIL)|("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
+        
         $new_message = preg_replace_callback(
             $regex,
             function ($matches) use ($post) {
+                // Diese Callback-Funktion ist nur noch für die Automatik zuständig.
                 return '<span class="char-'.$post['uid'].'">' . $matches[0] . '</span>';
             },
-            $original_message
+            $message // Wichtig: Wir arbeiten mit der neuen $message-Variable
         );
+
         if ($new_message !== null) {
             $post['message'] = $new_message;
         }
+        
+        // ### ENDE DER KORREKTUR ###
     }
     return $post;
 }
