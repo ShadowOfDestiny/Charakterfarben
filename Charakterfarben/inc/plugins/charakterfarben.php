@@ -248,39 +248,56 @@ function charakterfarben_post_handler(&$post)
     return $post;
 }
 
+// ### VORSCHAU: STABILE VERSION OHNE ZEILENUMBRUCH-ERKENNUNG ###
 function charakterfarben_preview_handler()
 {
-    global $mybb, $db;
-    if (isset($mybb->input['previewpost'])) {
+    global $mybb, $db, $headerinclude;
+
+    if (isset($mybb->input['previewpost'])) 
+    {
+        // Türsteher für aktive Foren
         $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
-        $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
-        if (empty($active_forums[0]) || !in_array($current_fid, $active_forums)) return;
+        if (!empty($active_forums[0]) && isset($mybb->input['fid'])) {
+            $current_fid = $mybb->get_input('fid', MyBB::INPUT_INT);
+            if (!in_array($current_fid, $active_forums)) {
+                return;
+            }
+        }
 
         if ($mybb->user['uid'] == 0) return;
         $fid = (int)$mybb->settings['charakterfarben_fid'];
-        $fid_char_name = 'fid' . $fid;
-        if (!$fid || !isset($mybb->user[$fid_char_name])) return;
-        $char_name = strtolower(trim($mybb->user[$fid_char_name]));
+        if (!$fid || !isset($mybb->user['fid'.$fid])) return;
+        $char_name = strtolower(trim($mybb->user['fid'.$fid]));
         $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
-
-        if (strpos($mybb->input['message'], "<{$clean_name}>") !== false) return;
+        if (empty($clean_name)) return;
 
         $current_theme_id = (int)$mybb->user['style'];
-        if ($current_theme_id == 0) $current_theme_id = 1;
         $query = $db->simple_select("charakterfarben", "color", "uid = '{$mybb->user['uid']}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
         $color_data = $db->fetch_array($query);
 
-        if ($color_data && !empty($color_data['color']) && is_string($mybb->input['message'])) {
+        if ($color_data && !empty($color_data['color'])) {
             $color_hex = $color_data['color'];
-            $message = &$mybb->input['message'];
-            $regex = '/("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
-            $message = preg_replace_callback(
-                $regex,
-                function ($matches) use ($color_hex) {
-                    return '[color='.$color_hex.']'.$matches[0].'[/color]';
-                },
-                $message
-            );
+
+            // SCHRITT 1: CSS für manuelle Tags laden.
+            $headerinclude .= "\n<style type=\"text/css\">.post_body span.{$clean_name} { color: {$color_hex} !important; }</style>\n";
+            
+            if (isset($mybb->input['message']) && is_string($mybb->input['message']))
+            {
+                $message = &$mybb->input['message'];
+                
+                // KEINE if-Abfrage mehr, die das Mischen verhindert.
+                
+                // Der einfache, aber funktionierende Regex für Zeilenumbrüche.
+                $regex = '/("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
+                
+                $message = preg_replace_callback(
+                    $regex,
+                    function ($matches) use ($color_hex) {
+                        return '[color='.$color_hex.']'.$matches[0].'[/color]';
+                    },
+                    $message
+                );
+            }
         }
     }
 }
