@@ -213,11 +213,10 @@ function charakterfarben_post_handler(&$post)
     // ### TÜRSTEHER ###
     $active_forums = explode(',', $mybb->settings['charakterfarben_active_forums']);
     if (!in_array($post['fid'], $active_forums)) {
-        // KORREKTUR #1: Immer das $post-Objekt zurückgeben
         return $post;
     }
 
-    // --- Teil A: CSS hinzufügen ---
+    // --- Teil A: CSS hinzufügen (unverändert, funktioniert) ---
     $user_id = (int)$post['uid'];
     if (!isset($processed_users_css[$user_id]) && $user_id > 0) {
         $fid = (int)$mybb->settings['charakterfarben_fid'];
@@ -226,55 +225,65 @@ function charakterfarben_post_handler(&$post)
             $clean_name_css = preg_replace('/[^a-z0-9]/', '', $char_name_css);
             if (!empty($clean_name_css)) {
                 $current_theme_id = (int)$mybb->user['style'];
+                if ($mybb->user['style'] == 0) { // Fallback für Admins/Gäste ohne explizites Theme
+                    $current_theme_id = 1; // oder eine andere Standard-Theme-ID
+                }
                 $query = $db->simple_select("charakterfarben", "color", "uid = '{$user_id}' AND tid = '{$current_theme_id}'", ['limit' => 1]);
                 $color_data = $db->fetch_array($query);
                 if ($color_data && !empty($color_data['color'])) {
-                    $headerinclude .= "\n<style type=\"text/css\">.post_body {$clean_name_css}, .post_body span.{$clean_name_css} { color: {$color_data['color']} !important; }</style>\n";
+                    $headerinclude .= "\n<style type=\"text/css\">.post_body span.{$clean_name_css} { color: {$color_data['color']} !important; }</style>\n";
                     $processed_users_css[$user_id] = true;
                 }
             }
         }
     }
 
-    // --- Teil B: Nachrichtentext umwandeln ---
-    // Der if(true) Block ist deine persönliche Anpassung, die ist ok so.
-    if(true) 
-    {
-        $fid = (int)$mybb->settings['charakterfarben_fid'];
-        if (isset($post['uid']) && $post['uid'] > 0 && isset($post['fid'.$fid])) {
-            $char_name = strtolower(trim($post['fid'.$fid]));
-            $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
+    // --- Teil B: Nachrichtentext umwandeln (FINALE, KORRIGIERTE LOGIK) ---
+    $fid = (int)$mybb->settings['charakterfarben_fid'];
+    if (isset($post['uid']) && $post['uid'] > 0 && isset($post['fid'.$fid])) {
+        $char_name = strtolower(trim($post['fid'.$fid]));
+        $clean_name = preg_replace('/[^a-z0-9]/', '', $char_name);
 
-            if (!empty($clean_name) && !strpos($post['message'], "class=\"{$clean_name}\"")) {
+        if (!empty($clean_name) && !strpos($post['message'], "class=\"{$clean_name}\"")) {
+            
+            $original_message = $post['message'];
 
-                $dom = new DOMDocument();
-                libxml_use_internal_errors(true);
-                $dom->loadHTML('<?xml encoding="UTF-8"><body>' . $post['message'] . '</body>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-                libxml_clear_errors();
-                $xpath = new DOMXPath($dom);
-                $textNodes = $xpath->query('//body//text()[not(ancestor::script) and not(ancestor::style)]');
-                $regex = '/"([^"]*)"|„([^“]*)“|“([^”]*)”|«([^»]*)»|»([^«]*)«/u';
+            // ### START DER NEUEN LOGIK ###
+            
+            // Der Regex, der über Zeilenumbrüche hinweg sucht
+            $regex = '/("[\s\S]*?")|(„[\s\S]*?“)|(“[\s\S]*?”)|(«[\s\S]*?»)|(»[\s\S]*?«)/u';
 
-                foreach($textNodes as $node) {
-                    $text = $node->nodeValue;
-                    $newText = preg_replace_callback($regex, function ($matches) use ($clean_name) {
-                        return '<span class="'.$clean_name.'">'.$matches[0].'</span>';
-                    }, $text);
-
-                    if ($newText !== $text) {
-                        $fragment = $dom->createDocumentFragment();
-                        @$fragment->appendXML($newText);
-                        $node->parentNode->replaceChild($fragment, $node);
+            $new_message = preg_replace_callback(
+                $regex,
+                function ($matches) use ($clean_name) {
+                    $quote = $matches[0];
+                    
+                    // INTelligente Sicherheitsprüfung:
+                    // 1. Wir entfernen temporär die erlaubten <br>-Tags für die Prüfung.
+                    $check_string = str_ireplace(['<br>', '<br />'], '', $quote);
+                    
+                    // 2. Wir entfernen die äußeren Anführungszeichen für die Prüfung.
+                    $check_string = trim($check_string, '"„“«»');
+                    
+                    // 3. Jetzt prüfen wir, ob *andere* HTML-Tags oder MyCode im Zitat enthalten sind.
+                    if (preg_match('/<[a-z]/i', $check_string) || strpos($check_string, '[') !== false) {
+                        // Zitat enthält komplexes HTML (z.B. Links) oder MyCode -> nicht anfassen
+                        return $quote;
                     }
-                }
-                
-                // KORREKTUR #2: Nur den Inhalt des <body>-Tags speichern, nicht das ganze Dokument
-                $body_node = $dom->getElementsByTagName('body')->item(0);
-                $new_message = '';
-                foreach ($body_node->childNodes as $child) {
-                    $new_message .= $dom->saveHTML($child);
-                }
+                    
+                    // Das Zitat ist sicher, wir färben es ein.
+                    return '<span class="'.$clean_name.'">' . $quote . '</span>';
+                },
+                $original_message
+            );
+            
+            // ### ENDE DER NEUEN LOGIK ###
+
+            // Sicherheitsprüfung: Nur übernehmen, wenn die Änderung erfolgreich war.
+            if ($new_message !== null && !empty(trim($new_message))) {
                 $post['message'] = $new_message;
+            } else {
+                $post['message'] = $original_message;
             }
         }
     }
